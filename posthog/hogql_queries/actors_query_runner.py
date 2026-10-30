@@ -1,9 +1,11 @@
 import itertools
 from collections.abc import Iterable, Iterator, Sequence
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, Optional, cast
 
 if TYPE_CHECKING:
     from posthog.event_usage import AnalyticsProps
+
+    from products.customer_analytics.backend.facade.queries import AccountUsersQueryRunner
 
 from posthoganalytics import feature_enabled
 
@@ -18,6 +20,7 @@ from posthog.schema import (
 
 from posthog.hogql import ast
 from posthog.hogql.constants import HogQLQuerySettings, LimitContext
+from posthog.hogql.context import HogQLContext
 from posthog.hogql.parser import parse_expr, parse_order_expr
 from posthog.hogql.printer import prepare_and_print_ast
 from posthog.hogql.property import has_aggregation
@@ -69,6 +72,16 @@ class ActorsQueryRunner(AnalyticsQueryRunner[ActorsQueryResponse]):
 
     def _child_runners(self) -> Iterable[QueryRunner]:
         return [self.source_query_runner] if self.source_query_runner is not None else []
+
+    def _get_account_users_source(self) -> "AccountUsersQueryRunner | None":
+        if self.query.source is not None and self.query.source.kind == "AccountUsersQuery":
+            return cast("AccountUsersQueryRunner", self.source_query_runner)
+        return None
+
+    def build_hogql_context(self, **kwargs: object) -> HogQLContext:
+        context = super().build_hogql_context(**kwargs)
+        source = self._get_account_users_source()
+        return source.get_actors_hogql_context(context) if source is not None else context
 
     def _on_user_changed(self) -> None:
         super()._on_user_changed()
@@ -125,6 +138,9 @@ class ActorsQueryRunner(AnalyticsQueryRunner[ActorsQueryResponse]):
         return self.source_query_runner.is_session_aggregation
 
     def determine_strategy(self) -> ActorStrategy:
+        account_users_source = self._get_account_users_source()
+        if account_users_source is not None:
+            return account_users_source.get_actors_strategy(self.query, self.paginator)
         if self.group_type_index is not None:
             return GroupStrategy(
                 self.group_type_index,
@@ -303,6 +319,9 @@ class ActorsQueryRunner(AnalyticsQueryRunner[ActorsQueryResponse]):
         super().validate()
         if self.source_query_runner is not None:
             self.source_query_runner.validate()
+        account_users_source = self._get_account_users_source()
+        if account_users_source is not None:
+            account_users_source.validate_actors_query(self.query)
 
     def input_columns(self) -> list[str]:
         strategy_input_cols = self.strategy.input_columns()
@@ -522,20 +541,21 @@ class ActorsQueryRunner(AnalyticsQueryRunner[ActorsQueryResponse]):
                 ):
                     select_query.select.append(ast.Field(chain=[source_distinct_id_column]))
 
-                try:
-                    prepare_and_print_ast(
-                        select_query,
-                        context=self.build_hogql_context(
-                            team=self.team,
-                            enable_select_queries=True,
-                            timings=self.timings,
-                            modifiers=self.modifiers,
-                        ),
-                        dialect="clickhouse",
-                    )
-                    return select_query
-                except Exception:
-                    pass
+                if self._get_account_users_source() is None:
+                    try:
+                        prepare_and_print_ast(
+                            select_query,
+                            context=self.build_hogql_context(
+                                team=self.team,
+                                enable_select_queries=True,
+                                timings=self.timings,
+                                modifiers=self.modifiers,
+                            ),
+                            dialect="clickhouse",
+                        )
+                        return select_query
+                    except Exception:
+                        pass
 
                 origin = self.strategy.origin
 
@@ -600,6 +620,9 @@ class ActorsQueryRunner(AnalyticsQueryRunner[ActorsQueryResponse]):
         return node
 
     def _get_person_display_name_column(self) -> ast.Expr:
+        account_users_source = self._get_account_users_source()
+        if account_users_source is not None:
+            return account_users_source.get_person_display_name_column()
         property_keys = self.team.person_display_name_properties or PERSON_DEFAULT_DISPLAY_NAME_PROPERTIES
         props = person_display_name_property_exprs(property_keys, "properties")
         # nosemgrep: hogql-fstring-audit (property_keys from team config is admin-only, not user input)

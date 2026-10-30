@@ -2347,6 +2347,44 @@ export namespace Schemas {
       readonly last_modified_by: UserBasic;
     }
 
+    /**
+     * Selected visible person properties.
+     */
+    export type AccountPersonProperties = {[key: string]: unknown};
+
+    export interface AccountPerson {
+      /** Current person ID. */
+      id: string;
+      /** Display name from visible person properties, or the person ID. */
+      display_name: string;
+      /** Current membership distinct IDs for person navigation, up to 101. */
+      distinct_ids: string[];
+      /** Selected visible person properties. */
+      properties: AccountPersonProperties;
+      /** Earliest account activity across current distinct IDs, in UTC. */
+      account_first_seen: string;
+      /** Latest account activity across current distinct IDs, in UTC. */
+      account_last_seen: string;
+    }
+
+    export interface AccountPersonsPage {
+      /** Matching current persons for this account. */
+      results: AccountPerson[];
+      /** Selected visible property keys, in request order. */
+      columns: string[];
+      /** Maximum persons per page. */
+      limit: number;
+      /** Number of matching persons skipped. */
+      offset: number;
+      /** Whether another page exists. */
+      has_more: boolean;
+      /**
+         * Offset of the next page, or null.
+         * @nullable
+         */
+      next_offset: number | null;
+    }
+
     export interface AccountPresenceViewer {
       /** PostHog user ID of the teammate viewing this account. */
       readonly user_id: number;
@@ -130001,6 +130039,55 @@ export namespace Schemas {
      */
     search?: string;
     };
+
+    export type AccountsPersonsRetrieveParams = {
+    /**
+     * JSON array of person property filters with key, operator, value, and type="person". Filters use AND.
+     */
+    filters?: string;
+    /**
+     * Maximum persons per page.
+     * @minimum 1
+     * @maximum 500
+     */
+    limit?: number;
+    /**
+     * Number of matching persons to skip.
+     * @minimum 0
+     */
+    offset?: number;
+    /**
+     * JSON array of selected person property keys. Example: ["email", "name"].
+     */
+    properties?: string;
+    /**
+     * Search name, email, person ID, or distinct ID.
+     * @maxLength 1000
+     */
+    search?: string;
+    /**
+     * Sort by id, display_name, account_first_seen, account_last_seen, or a selected property key.
+     * @minLength 1
+     * @maxLength 1000
+     */
+    sort_column?: string;
+    /**
+     * Sort direction. Person ID breaks ties.
+     *
+     * * `asc` - Ascending
+     * * `desc` - Descending
+     * @minLength 1
+     */
+    sort_direction?: AccountsPersonsRetrieveSortDirection;
+    };
+
+    export type AccountsPersonsRetrieveSortDirection = typeof AccountsPersonsRetrieveSortDirection[keyof typeof AccountsPersonsRetrieveSortDirection];
+
+
+    export const AccountsPersonsRetrieveSortDirection = {
+      Asc: 'asc',
+      Desc: 'desc',
+    } as const;
 
     export type AccountsSummariesListParams = {
     /**

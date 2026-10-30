@@ -74,6 +74,15 @@ from products.customer_analytics.backend.facade.constants import (
     CUSTOMER_ANALYTICS_FEATURE_REQUESTS_FLAG,
     CUSTOMER_ANALYTICS_TRACK_RULES_FLAG,
 )
+from products.customer_analytics.backend.facade.persons import (
+    AccountPersonsOptions,
+    AccountPersonsPropertyAccessError,
+    list_account_persons,
+)
+from products.customer_analytics.backend.presentation.views.account_persons import (
+    AccountPersonsPageSerializer,
+    AccountPersonsQuerySerializer,
+)
 from products.customer_analytics.backend.presentation.views.serializers import (
     AccountByExternalIdQuerySerializer,
     AccountChannelSummarySerializer,
@@ -1975,6 +1984,28 @@ class AccountViewSet(
     ALLOWED_ORDERING = frozenset({"name", "-name", "created_at", "-created_at", "updated_at", "-updated_at"})
 
     @extend_schema(
+        parameters=[_ACCOUNT_ID_PARAM, AccountPersonsQuerySerializer],
+        responses={200: AccountPersonsPageSerializer},
+    )
+    @action(methods=["GET"], detail=True, pagination_class=None)
+    def persons(self, request: Request, *args: Any, **kwargs: Any) -> Response:
+        query = AccountPersonsQuerySerializer(data=request.query_params)
+        query.is_valid(raise_exception=True)
+        try:
+            page = list_account_persons(
+                team=self.team,
+                user=cast(User, request.user),
+                account_id=self.kwargs["pk"],
+                user_access_control=self.user_access_control,
+                options=AccountPersonsOptions(**query.validated_data),
+            )
+        except AccountPersonsPropertyAccessError:
+            raise PermissionDenied("You cannot filter or sort by this property.")
+        if page is None:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+        return Response(AccountPersonsPageSerializer(page).data)
+
+    @extend_schema(
         parameters=[
             OpenApiParameter(
                 name="search",
@@ -2311,6 +2342,8 @@ class AccountViewSet(
                 return mixin_result
         # Ticket content behind an account-scoped viewset — a token holding only
         # account:read must not read it.
+        if view.action == "persons":
+            return ["account:read", "person:read"]
         if view.action in {"support_tickets", "support_ticket", "email_threads", "email_thread"}:
             return ["account:read", "ticket:read"]
         return None

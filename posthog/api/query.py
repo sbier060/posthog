@@ -78,6 +78,7 @@ from posthog.hogql_queries.query_failure_handling import captured_elsewhere
 from posthog.hogql_queries.query_runner import ExecutionMode, execution_mode_from_refresh
 from posthog.models.user import User
 from posthog.models.utils import uuid7
+from posthog.permissions import APIScopePermission
 from posthog.query_scan import slot as query_scan_slot
 from posthog.query_scan.flag import QueryScanMode, get_query_scan_flag
 from posthog.query_scan.serve import analysis_with_prompt
@@ -95,8 +96,11 @@ from posthog.rate_limit import (
 from posthog.schema_migrations.upgrade import upgrade
 
 from products.access_control.backend.facade.user_access_control import UserAccessControlError
-from products.customer_analytics.backend.facade.api import validate_account_users_access
-from products.customer_analytics.backend.facade.constants import ACCOUNT_USERS_QUERY_STATUS_LABEL_PREFIX
+from products.customer_analytics.backend.facade.constants import (
+    ACCOUNT_USERS_QUERY_ACCESS_LABEL_PREFIX,
+    ACCOUNT_USERS_QUERY_STATUS_LABEL_PREFIX,
+)
+from products.customer_analytics.backend.facade.persons import validate_account_users_access
 from products.managed_warehouse.backend.facade import query_labels as managed_warehouse_query_labels
 from products.managed_warehouse.backend.facade.query_execution import validate_managed_trino_raw_access
 from products.warehouse_sources.backend.facade.models import is_managed_warehouse_connection_ready
@@ -275,11 +279,14 @@ class QueryViewSet(TeamAndOrgViewSetMixin, PydanticModelMixin, viewsets.ViewSet)
     scope_object_read_actions = ["retrieve", "create", "list", "destroy"]
     scope_object_write_actions: list[str] = []
     sharing_enabled_actions = ["retrieve"]
+    _account_users_required_scopes: list[str] | None = None
 
     def finalize_response(self, request: Request, response: Response, *args: Any, **kwargs: Any) -> Response:
         return add_query_response_identity_headers(super().finalize_response(request, response, *args, **kwargs))
 
     def dangerously_get_required_scopes(self, request, view) -> list[str] | None:
+        if getattr(view, "action", None) == "retrieve":
+            return self._account_users_required_scopes
         if getattr(view, "action", None) != "create":
             return None
         query = request.data.get("query") if isinstance(request.data, dict) else None
@@ -508,9 +515,22 @@ class QueryViewSet(TeamAndOrgViewSetMixin, PydanticModelMixin, viewsets.ViewSet)
             None,
         )
         if account_users_account_id is not None:
+            self._account_users_required_scopes = _QUERY_KIND_SCOPES["AccountUsersQuery"]
+            if not APIScopePermission().has_permission(request, self):
+                raise PermissionDenied("This action requires account and person read scopes.")
             try:
                 validate_account_users_access(
-                    self.team, request.user if isinstance(request.user, User) else None, account_users_account_id
+                    self.team,
+                    request.user if isinstance(request.user, User) else None,
+                    account_users_account_id,
+                    access_key=next(
+                        (
+                            label.removeprefix(ACCOUNT_USERS_QUERY_ACCESS_LABEL_PREFIX)
+                            for label in query_status.labels or []
+                            if label.startswith(ACCOUNT_USERS_QUERY_ACCESS_LABEL_PREFIX)
+                        ),
+                        None,
+                    ),
                 )
             except UserAccessControlError as error:
                 raise PermissionDenied(str(error)) from error

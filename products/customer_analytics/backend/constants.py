@@ -63,4 +63,5 @@ DELIVERY_RATE_LIMIT_DEFERRED_ERROR = "rate_limited_deferred"
 DELIVERY_INTERRUPTED_ERROR = "interrupted before confirmation; the message may have been delivered"
 
 # Marks an async query status whose stored results are account users, so retrieval repeats the access check.
+ACCOUNT_USERS_QUERY_ACCESS_LABEL_PREFIX = "customer-analytics-account-users-access:"
 ACCOUNT_USERS_QUERY_STATUS_LABEL_PREFIX = "customer-analytics-account-users:"
